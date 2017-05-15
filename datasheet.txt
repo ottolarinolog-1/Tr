@@ -1,0 +1,23 @@
+Tracker_3 datasheet
+
+Solar sensor:
+  A4 - common;
+  A5 - horizontal;
+  A6 - vertical.
+
+H-bridge:
+  D9 -  UP;
+  D10 - Down;
+  D11 - Servo.
+
+Encoder:
+  D2 - INT_0;
+  D4 - input 2.
+
+ModBus:
+  BoudRate - 250000;
+  Reg. 0 - mirror position.
+
+Серво кор-кр, бел/кор - черн, бел/син - бел
+Датчик зел-зел, бел/зел - бел, оранж - крас, бел/ор - жел
+Комон - жовт, верт - бел, гор - зел
