@@ -1,4 +1,16 @@
 #include <Servo.h>
+#include <SimpleModbusSlave.h>
+
+// Налаштовувані константи.
+////////////////////////////////////////////////////////////////////////////////
+#define hysteresis  70    // Для сонця ~70.
+
+#define BaudRate  250000  // Швидкість передачі Serial.
+
+#define CalibrationDelay  60000 // Затримка для виставлення дзеркала в 0.
+#define PositioningDelay  1000  // Затримка в позиціонуванні після зупинки.
+#define ServoPosDelay 15  // Зтримка для позиціонування сервомотора.
+////////////////////////////////////////////////////////////////////////////////
 
 #define SensCPin  A4	// Common.
 #define SensHPin  A5	// Horizontal.
@@ -8,44 +20,57 @@
 #define MoveDPin  10	// Down.
 #define ServoPin  11	// Left/Right.
 
-#define hysteresis  70  // Для сонця ~70.
-//
-//#define corrL  1
-//#define corrR  1
+#define EncoderPin2 4 // 2-га нога енкодера (1-ша на другому піні).
 
-#define moveUp  	{digitalWrite(MoveUPin, HIGH); digitalWrite(MoveDPin, LOW); Serial.println("UP");}
-#define moveDown  {digitalWrite(MoveDPin, HIGH); digitalWrite(MoveUPin, LOW); Serial.println("DOWN");}
-#define moveStop  {digitalWrite(MoveDPin, HIGH); digitalWrite(MoveUPin, HIGH); Serial.println("STOP");}
+#define moveUp  	{digitalWrite(MoveUPin, LOW); digitalWrite(MoveDPin, HIGH); Serial.println("UP");}
+#define moveDown  {digitalWrite(MoveDPin, LOW); digitalWrite(MoveUPin, HIGH); Serial.println("DOWN");}
+#define moveStop  {digitalWrite(MoveDPin, LOW); digitalWrite(MoveUPin, LOW); Serial.println("STOP");}
 
-int valC, valH, valV, errorV, errorH;
-byte position = 90;
+int valC, valH, valV, errorV, errorH, posMirror;
+byte posServo = 90;
 double timeCount;
 
 Servo servoMotor;
 
-void setup() {
-  Serial.begin(250000);
+//  Modbus.
+enum {MIRROR_POSITION, HOLDING_REGS_SIZE};  // Опис регістрів.
+unsigned int holdingRegs[HOLDING_REGS_SIZE];  // Об'явлення масиву регістрів.
 
+void setup() {
+  //Serial.begin(BaudRate);
+  
   servoMotor.attach(ServoPin);
-  servoMotor.write(position);     // Виставити на "середину".
-  delay(15);                // Почекати поки стане.
+  servoMotor.write(posServo); // Виставити на "середину".
+  delay(ServoPosDelay);       // Почекати поки стане.
 
   pinMode(SensCPin, INPUT);
   pinMode(SensHPin, INPUT);
   pinMode(SensVPin, INPUT);
+  
+  pinMode(EncoderPin2, INPUT);
 
   pinMode(MoveUPin, OUTPUT);
   pinMode(MoveDPin, OUTPUT);
 
-  digitalWrite(MoveDPin, HIGH);
-  digitalWrite(MoveUPin, HIGH);
+  digitalWrite(MoveDPin, LOW);
+  digitalWrite(MoveUPin, LOW);
+
+  // Виведення дзеркала в початкову позицію.
+  moveDown;
+  delay(CalibrationDelay);
+  moveStop;
+  posMirror = 0;
 
   timeCount = millis();
+  
+  attachInterrupt(0, int_0, RISING);  // Об'явлення обробника переривань.
+  
+  //  Modbus.
+  modbus_configure(&Serial, BaudRate, SERIAL_8N1, 1, 2, HOLDING_REGS_SIZE, holdingRegs);// Конфігурація.
+  modbus_update_comms(BaudRate, SERIAL_8N1, 1); // Параметри обміну.
 }
 
 void loop() {
-  info(0);
-  
   // Опитування і визначення похибок.
   valC = analogRead(SensCPin);
   valH = analogRead(SensHPin);
@@ -54,132 +79,48 @@ void loop() {
   errorV = abs(valC - valV);
 
   // Актуатор.
-  if ((errorV <= hysteresis-35)) {
-    //info(1);
+  if ((errorV <= hysteresis - hysteresis/2)) {
     moveStop;
-    delay(1000);
+    //delay(PositioningDelay);  // ?????
   }
-  else if (valC > valV) {
-    //info(1);
+  else if (valC > valV) { 
     if (errorV > hysteresis) moveUp;
-  }
+  } // 1 раз ввікнулось і не вимкнеться поки не спрацює умова на СТОП.
   else if (valV > valC) {
-    //info(1);
     if (errorV > hysteresis) moveDown;
   }
 
   // Сервопривод.
   if (timeCount > millis()) timeCount = millis();	// Спрацює при переповненні millis().
 
-  if (millis() - timeCount > 15) {
-    timeCount = millis();
+  if (millis() - timeCount > ServoPosDelay) {     // Все робити коли пройде час
+    timeCount = millis();                         // для зміни положення.
 
     if (errorH > hysteresis) {
       if (valC > valH) {
-        position--;
-        if (position > 180) position = 180;
-        servoMotor.write(position);
-         Serial.println("--");
-        //info(2);
+        posServo--;
+        if (posServo > 180) posServo = 180;
+        servoMotor.write(posServo);
       }
       
       if (valH > valC) {
-        position++;
-        if (position == 255) position = 0;
-        servoMotor.write(position);
-         Serial.println("++");
-        //info(2);
+        posServo++;
+        if (posServo == 255) posServo = 0;
+        servoMotor.write(posServo);
       }
-     // info(2);
     }
   }
-  /*
-    // Надаштування гістерезиса та корекцій.
-    if (Serial.available())
-    {
-      switch (Serial.read())
-      {
-        case 113:   // q
-          hysteresis++;
-          break;
-        case 97:    // a
-          hysteresis--;
-          break;
-
-        case 119:   // w
-          corrL++;
-          break;
-        case 115:   // s
-          corrL--;
-          break;
-
-        case 101:    // e
-          corrR++;
-          break;
-        case 100:    // d
-          corrR--;
-          break;
-
-        case 114:   // r
-          moveLeft;
-          break;
-        case 102:   // f
-          moveRight;
-          break;
-
-        case 104:    // h
-          Serial.println("For +/- hysteresis press q/a");
-          Serial.println("For +/- corrL press w/s");
-          Serial.println("For +/- corrR press e/d");
-          Serial.println("For move actuatotor left/right press r/f");
-          break;
-
-        default:
-          Serial.println("No such function");
-      }
-
-      Serial.println();
-      Serial.println();
-      Serial.print("hysteresis = ");
-      Serial.println(hysteresis);
-      Serial.print("corrL = ");
-      Serial.println(corrL);
-      Serial.print("corrR = ");
-      Serial.println(corrR);
-      Serial.println();
-      Serial.println();
-
-    delay(1500);
-    }*/
 }
 
-void info(byte direction) {
-  switch (direction) {
-    case 1:
-      Serial.println("ACTUATOR");
-      break;
-    case 2:
-      Serial.println("SERVO");
-      break;
+void int_0() {
+  if (digitalRead(EncoderPin2) == LOW) {
+    posMirror++;
   }
-
-  Serial.print("Common Sensor: ");
-  Serial.print(valC);
-
-  Serial.print("        Horizontal Sensor: ");
-  Serial.print(valH);
-
-  Serial.print("				Vertical Sensor: ");
-  Serial.println(valV);
-
-
-  Serial.print("errorH: ");
-  Serial.print(errorH);
-  Serial.print("        errorV: ");
-  Serial.println(errorV);
-  Serial.print("        POSITION: ");
-  Serial.println(position);
-  Serial.println();
-
+  else {
+    posMirror--;
+  }
+  
+  // Modbus.
+  holdingRegs[MIRROR_POSITION] = posMirror; // Запис данних в регистр.
+  modbus_update();// Оновлення данних в регістрах.
 }
-
